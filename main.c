@@ -23,7 +23,10 @@ this program.  If not, see <http://www.gnu.org/licenses/>.  */
 #include "commands.h"
 #include "rule.h"
 #include "debug.h"
+#include "event.h"
 #include "getopt.h"
+
+#include <sys/file.h>
 
 #include <assert.h>
 #ifdef _AMIGA
@@ -183,6 +186,9 @@ static struct stringlist *db_flags = 0;
 static int debug_flag = 0;
 
 int db_level = 0;
+FILE *event_file = NULL;
+static char *event_logfile = NULL;
+static char *event_log_fd = NULL;
 
 /* Synchronize output (--output-sync).  */
 
@@ -352,6 +358,8 @@ static const char *const usage[] =
     N_("\
   -E STRING, --eval=STRING    Evaluate STRING as a makefile statement.\n"),
     N_("\
+  --event-log=FILE]           Print event log to FILE.\n"),
+    N_("\
   -f FILE, --file=FILE, --makefile=FILE\n\
                               Read FILE as a makefile.\n"),
     N_("\
@@ -469,6 +477,8 @@ static const struct command_switch switches[] =
     { CHAR_MAX+7, string, &sync_mutex, 1, 1, 0, 0, 0, "sync-mutex" },
     { CHAR_MAX+8, flag_off, &silent_flag, 1, 1, 0, 0, &default_silent_flag, "no-silent" },
     { CHAR_MAX+9, string, &jobserver_auth, 1, 0, 0, 0, 0, "jobserver-fds" },
+    { CHAR_MAX+10, string, &event_logfile, 0, 0, 0, 0, 0, "event-log" },
+    { CHAR_MAX+11, string, &event_log_fd, 1, 1, 0, 0, 0, "event-log-fd" },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 }
   };
 
@@ -799,6 +809,59 @@ decode_output_sync_flags (void)
   if (sync_mutex)
     RECORD_SYNC_MUTEX (sync_mutex);
 #endif
+}
+
+void
+event_log(const char* what, const char* name, unsigned int id, const char* which)
+{
+  int dummy;
+  struct timespec ts;
+  unsigned long time_in_micros;
+  (void)what;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  time_in_micros = 1000000 * ts.tv_sec + ts.tv_nsec / 1000;
+  EINTRLOOP(dummy, flock(fileno(event_file), LOCK_EX));
+  fprintf(event_file, "{\"cat\": \"job\", \"name\": \"%s\", \"ts\": %lu, \"pid\": %d, \"ph\": \"%s\", ", name, time_in_micros, getpid(), which);
+  fprintf(event_file, "\"id2\": {\"local\": %u}", id);
+  fprintf(event_file, "},\n");
+  fflush(event_file);
+  EINTRLOOP(dummy, flock(fileno(event_file), LOCK_UN));
+}
+
+void
+handle_event_log ()
+{
+  int fd;
+  if (event_logfile != NULL) {
+    event_file = fopen(event_logfile, "w");
+    if (event_file == NULL) {
+      pfatal_with_name (_("fopen (event log)"));
+    }
+    /* Pass down to submakes */
+    event_log_fd = xmalloc (INTSTR_LENGTH);
+    sprintf(event_log_fd, "%d", fileno(event_file));
+    fprintf(event_file, "[\n");
+    fflush(event_file);
+  } else if (event_log_fd != NULL) {
+    /* Passed down from a parent make */
+    if (sscanf(event_log_fd, "%d", &fd) != 1) {
+      pfatal_with_name (_("internal error: invalid --event-log-fd string"));
+    }
+    event_file = fdopen(fd, "w");
+    if (event_file == NULL) {
+      pfatal_with_name (_("fdopen (event log fd)"));
+    }
+  }
+}
+
+void
+finish_event_log ()
+{
+  if (event_logfile != NULL && event_file != NULL) {
+    fprintf(event_file, "{}\n]\n");
+    fclose(event_file);
+    event_file = NULL;
+  }
 }
 
 #ifdef WINDOWS32
@@ -1630,6 +1693,9 @@ main (int argc, char **argv, char **envp)
     job_slots = (unsigned int)arg_job_slots;
 
  job_setup_complete:
+
+  /* Setup event logging. */
+  handle_event_log ();
 
   /* The extra indirection through $(MAKE_COMMAND) is done
      for hysterical raisins.  */
@@ -2560,6 +2626,8 @@ main (int argc, char **argv, char **envp)
     if (clock_skew_detected)
       O (error, NILF,
          _("warning:  Clock skew detected.  Your build may be incomplete."));
+
+    finish_event_log ();
 
     /* Exit.  */
     die (makefile_status);

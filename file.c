@@ -36,6 +36,8 @@ this program.  If not, see <http://www.gnu.org/licenses/>.  */
    only work on files which have not yet been snapped. */
 int snapped_deps = 0;
 
+unsigned int next_file_id = 0;
+
 /* Hash table of files the makefile knows how to make.  */
 
 static unsigned long
@@ -192,6 +194,8 @@ enter_file (const char *name)
   new = xcalloc (sizeof (struct file));
   new->name = new->hname = name;
   new->update_status = us_none;
+  new->id = next_file_id;
+  next_file_id++;
 
   if (HASH_VACANT (f))
     {

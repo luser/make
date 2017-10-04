@@ -21,6 +21,7 @@ this program.  If not, see <http://www.gnu.org/licenses/>.  */
 #include "dep.h"
 #include "variable.h"
 #include "debug.h"
+#include "event.h"
 
 #include <assert.h>
 
@@ -330,6 +331,12 @@ update_file (struct file *file, unsigned int depth)
   for (; f != 0; f = f->prev)
     {
       enum update_status new;
+
+      if (f->considered == 0) {
+        /* This is the first time this file was considered. */
+        /* TODO: need unique ids for consider + remake! */
+        /* EVENTF("consider", f->name, f->id, EVENT_BEGIN); */
+      }
 
       f->considered = considered;
 
@@ -875,6 +882,10 @@ notice_finished_file (struct file *file)
   file->command_state = cs_finished;
   file->updated = 1;
 
+  if (file->update_status == us_success && file->cmds != 0) {
+    EVENTF("remake", file->name, file->id, EVENT_END);
+  }
+
   if (touch_flag
       /* The update status will be:
            us_success   if 0 or more commands (+ or ${MAKE}) were run and won;
@@ -1226,6 +1237,7 @@ remake_file (struct file *file)
     }
   else
     {
+      EVENTF("remake", file->name, file->id, EVENT_BEGIN);
       chop_commands (file->cmds);
 
       /* The normal case: start some commands.  */

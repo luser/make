@@ -20,6 +20,7 @@ this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include "job.h"
 #include "debug.h"
+#include "event.h"
 #include "filedef.h"
 #include "commands.h"
 #include "variable.h"
